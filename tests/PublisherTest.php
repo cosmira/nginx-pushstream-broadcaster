@@ -17,7 +17,7 @@ use PHPUnit\Framework\Attributes\Test;
 final class PublisherTest extends TestCase
 {
     #[Test]
-    public function sendsLegacyEnvelopeAndReturnsResponse(): void
+    public function sendsJsonEnvelopeAndReturnsResponse(): void
     {
         $http = $this->app->make(Factory::class);
         $http->fake(['*' => $http->response(['channel' => 'broadcast'], 201)]);

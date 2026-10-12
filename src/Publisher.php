@@ -32,7 +32,7 @@ final readonly class Publisher
     }
 
     /**
-     * Publish the JSON envelope used by existing Yii clients.
+     * Publish a JSON envelope containing the channel name and application data.
      */
     public function send(string $channel, mixed $data): Response
     {

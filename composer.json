@@ -1,6 +1,6 @@
 {
     "name": "cosmira/nginx-pushstream-broadcaster",
-    "description": "Laravel broadcasting and legacy JSON publishing through the nginx Push Stream HTTP publisher.",
+    "description": "Laravel broadcast driver and HTTP publisher for nginx Push Stream.",
     "keywords": [
         "laravel",
         "nginx",
