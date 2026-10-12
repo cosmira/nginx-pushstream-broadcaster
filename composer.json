@@ -1,0 +1,97 @@
+{
+    "name": "cosmira/nginx-pushstream-broadcaster",
+    "description": "Laravel broadcasting and legacy JSON publishing through the nginx Push Stream HTTP publisher.",
+    "keywords": [
+        "laravel",
+        "nginx",
+        "push-stream",
+        "broadcasting",
+        "websocket"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Alexandr Chernyaev",
+            "email": "bliz48rus@gmail.com",
+            "homepage": "https://tabuna.github.io",
+            "role": "Developer"
+        }
+    ],
+    "require": {
+        "illuminate/broadcasting": "^12.0 || ^13.0",
+        "illuminate/contracts": "^12.0 || ^13.0",
+        "illuminate/http": "^12.0 || ^13.0",
+        "illuminate/support": "^12.0 || ^13.0",
+        "php": "^8.2"
+    },
+    "require-dev": {
+        "infection/infection": "^0.32.4",
+        "laravel/pint": "^1.27",
+        "orchestra/testbench": "^10.0 || ^11.0",
+        "phpstan/phpstan": "^2.2",
+        "phpunit/phpunit": "^11.0 || ^12.0",
+        "rector/rector": "^2.6.7"
+    },
+    "autoload": {
+        "psr-4": {
+            "Cosmira\\NginxPushstream\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Cosmira\\NginxPushstream\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Cosmira\\NginxPushstream\\NginxPushstreamServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "infection/extension-installer": true
+        }
+    },
+    "prefer-stable": true,
+    "scripts": {
+        "post-autoload-dump": [
+            "@clear",
+            "@prepare"
+        ],
+        "clear": "@php vendor/bin/testbench package:purge-skeleton --ansi",
+        "prepare": "@php vendor/bin/testbench package:discover --ansi",
+        "test": [
+            "@clear",
+            "@php vendor/bin/phpunit"
+        ],
+        "test:coverage": [
+            "@clear",
+            "@php -d pcov.enabled=1 -d pcov.directory=. -d xdebug.mode=coverage vendor/bin/phpunit --coverage-clover=build/coverage.xml --coverage-text",
+            "@php tools/check-coverage.php"
+        ],
+        "test:mutation": [
+            "@clear",
+            "@php -d pcov.enabled=1 -d pcov.directory=. vendor/bin/infection --threads=1"
+        ],
+        "test:types": "@php vendor/bin/phpstan analyse --memory-limit=1G",
+        "test:rector": [
+            "@php vendor/bin/rector validate-config",
+            "@php vendor/bin/rector process --dry-run --no-progress-bar"
+        ],
+        "pint": "@php vendor/bin/pint",
+        "pint:test": "@php vendor/bin/pint --test",
+        "test:soda": "@php .tools/soda/soda quality src --config=soda.php",
+        "quality": [
+            "@pint:test",
+            "@test:rector",
+            "@test:types",
+            "@test:soda",
+            "@test:coverage",
+            "@test:mutation"
+        ]
+    },
+    "type": "library"
+}

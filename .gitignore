@@ -1,0 +1,12 @@
+/vendor/
+/.tools/
+/build/
+/.phpstan.cache/
+/.phpunit.cache/
+/.infection/
+.phpunit.result.cache
+composer.lock
+infection*.log
+infection-results.json
+.DS_Store
+/.idea/
