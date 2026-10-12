@@ -5,24 +5,28 @@ declare(strict_types=1);
 namespace Cosmira\NginxPushstream;
 
 use Illuminate\Broadcasting\BroadcastException;
-use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Factory;
 use Illuminate\Http\Client\Response;
 use InvalidArgumentException;
 
 final readonly class Publisher
 {
     /**
-     * Create the publisher with a configured HTTP request and channel URL.
+     * Create the publisher with a Laravel HTTP factory and channel URL.
      */
     public function __construct(
         /**
-         * HTTP request carrying application transport settings.
+         * Laravel HTTP client shared with the Http facade.
          */
-        private PendingRequest $http,
+        private Factory $http,
         /**
          * Publisher URL with a single channel placeholder.
          */
         private string $url,
+        /**
+         * HTTP options overriding the default timeouts.
+         */
+        private array $options = [],
     ) {
         if (substr_count($url, '{channel}') !== 1) {
             throw new InvalidArgumentException(
@@ -36,10 +40,18 @@ final readonly class Publisher
      */
     public function send(string $channel, mixed $data): Response
     {
-        return $this->sendRaw($channel, json_encode([
+        return $this->sendJson($channel, [
             'channel_name' => $channel,
             'data'         => $data,
-        ], JSON_THROW_ON_ERROR));
+        ]);
+    }
+
+    /**
+     * Publish application data as JSON without adding an envelope.
+     */
+    public function sendJson(string $channel, mixed $data): Response
+    {
+        return $this->sendRaw($channel, json_encode($data, JSON_THROW_ON_ERROR));
     }
 
     /**
@@ -54,7 +66,11 @@ final readonly class Publisher
         }
 
         $url = str_replace('{channel}', rawurlencode($channel), $this->url);
-        $response = (clone $this->http)
+        $response = $this->http
+            ->withOptions(array_replace([
+                'timeout'         => 5,
+                'connect_timeout' => 2,
+            ], $this->options))
             ->withoutRedirecting()
             ->withBody($body, 'application/json')
             ->post($url);

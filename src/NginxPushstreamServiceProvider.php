@@ -59,10 +59,9 @@ final class NginxPushstreamServiceProvider extends ServiceProvider
      */
     private function publisher(Application $app, array $config): Publisher
     {
-        $http = $app->make(Factory::class)
-            ->timeout($config['timeout'])
-            ->connectTimeout($config['connect_timeout']);
-
-        return new Publisher($http, $config['url']);
+        return new Publisher($app->make(Factory::class), $config['url'], [
+            'timeout'         => $config['timeout'],
+            'connect_timeout' => $config['connect_timeout'],
+        ]);
     }
 }

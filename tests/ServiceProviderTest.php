@@ -8,6 +8,7 @@ use Cosmira\NginxPushstream\NginxPushstreamServiceProvider;
 use Cosmira\NginxPushstream\Publisher;
 use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Http\Client\Factory;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\ServiceProvider;
 use PHPUnit\Framework\Attributes\Test;
 
@@ -24,6 +25,20 @@ final class ServiceProviderTest extends TestCase
         self::assertSame([
             dirname(__DIR__).DIRECTORY_SEPARATOR.'src/../config/nginx-pushstream.php' => $this->app->configPath('nginx-pushstream.php'),
         ], ServiceProvider::pathsToPublish(NginxPushstreamServiceProvider::class, 'nginx-pushstream-config'));
+    }
+
+    #[Test]
+    public function supportsHttpFakeAfterPublisherAndConnectionAreResolved(): void
+    {
+        $publisher = $this->app->make(Publisher::class);
+        $this->app->make('config')->set('broadcasting.connections.pushstream', ['driver' => 'nginx-pushstream']);
+        $driver = $this->app->make(BroadcastManager::class)->connection('pushstream');
+        Http::fake(['*' => Http::response('', 200)]);
+
+        $publisher->sendRaw('broadcast', '{}');
+        $driver->broadcast(['reports'], 'ready');
+
+        Http::assertSentCount(2);
     }
 
     #[Test]

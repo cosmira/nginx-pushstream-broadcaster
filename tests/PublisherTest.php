@@ -39,7 +39,7 @@ final class PublisherTest extends TestCase
         $http = $this->app->make(Factory::class);
         $http->fake(['*' => $http->response('', 204)]);
         $body = "{\"channel\":\"user_42_hash\", \"module\":\"reports\"}\n";
-        $publisher = new Publisher($http->timeout(7), 'https://nginx.test/pub?id={channel}');
+        $publisher = new Publisher($http, 'https://nginx.test/pub?id={channel}', ['timeout' => 7]);
         $response = $publisher->sendRaw('users:42.done', $body);
         self::assertSame(204, $response->status());
         $publisher->sendRaw('next', '{}');
@@ -53,16 +53,41 @@ final class PublisherTest extends TestCase
     }
 
     #[Test]
-    public function doesNotChangeTheInjectedRequestSettings(): void
+    public function usesFreshRequestsWithDefaultsAndExplicitOptions(): void
     {
         $http = $this->app->make(Factory::class);
-        $http->fake(['*' => $http->response('', 200)]);
-        $request = $http->withOptions(['allow_redirects' => true]);
-        $original = $request->getOptions();
-        $publisher = new Publisher($request, 'https://nginx.test/pub?id={channel}');
-        $publisher->sendRaw('broadcast', '{}');
+        $options = [];
+        $http->fake(function ($request, array $requestOptions) use (&$options, $http) {
+            $options[] = $requestOptions;
 
-        self::assertSame($original, $request->getOptions());
+            return $http->response('', 200);
+        });
+        (new Publisher($http, 'https://nginx.test/pub/{channel}'))->sendRaw('broadcast', '{}');
+        (new Publisher($http, 'https://nginx.test/pub/{channel}', [
+            'timeout'         => 7, 'connect_timeout' => 3, 'headers' => ['X-Publisher' => 'reports'],
+            'allow_redirects' => true,
+        ]))->sendRaw('reports', '{}');
+
+        self::assertSame(5, $options[0]['timeout']);
+        self::assertSame(2, $options[0]['connect_timeout']);
+        self::assertSame(7, $options[1]['timeout']);
+        self::assertSame(3, $options[1]['connect_timeout']);
+        self::assertFalse($options[1]['allow_redirects']);
+        self::assertSame(['reports'], $http->recorded()[1][0]->header('X-Publisher'));
+    }
+
+    #[Test]
+    public function sendsApplicationJsonWithoutAddingAnEnvelope(): void
+    {
+        $http = $this->app->make(Factory::class);
+        $http->fake(['*' => $http->response(['accepted' => true], 202)]);
+        $channel = 'user_42_hash';
+        $message = ['channel' => $channel, 'state' => 'data', 'data' => ['progress' => 50], 'meta' => ['module' => 'reports']];
+        $response = $this->app->make(Publisher::class)->sendJson($channel, $message);
+
+        self::assertSame(202, $response->status());
+        self::assertSame(['accepted' => true], $response->json());
+        self::assertSame($message, json_decode($http->recorded()[0][0]->body(), true));
     }
 
     #[Test]
@@ -88,7 +113,7 @@ final class PublisherTest extends TestCase
     public function requiresExactlyOnePlaceholder(string $url): void
     {
         $this->expectException(InvalidArgumentException::class);
-        new Publisher($this->app->make(Factory::class)->timeout(5), $url);
+        new Publisher($this->app->make(Factory::class), $url);
     }
 
     public static function invalidUrls(): array

@@ -46,6 +46,7 @@ final class NginxPushstreamBroadcaster extends Broadcaster
     public function broadcast(array $channels, mixed $event, array $payload = []): void
     {
         $names = $this->formatChannels($channels);
+        unset($payload['socket']);
 
         foreach ($names as $channel) {
             if (str_starts_with($channel, 'private-') || str_starts_with($channel, 'presence-')) {

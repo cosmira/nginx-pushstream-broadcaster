@@ -14,8 +14,20 @@ Once the package has been published to your Composer registry:
 composer require cosmira/nginx-pushstream-broadcaster
 ```
 
-Laravel discovers the service provider automatically. For local evaluation before publication, add a Composer
-`path` repository pointing to this standalone package and require `cosmira/nginx-pushstream-broadcaster:@dev`.
+Before registry publication, add the GitHub repository to your application's `composer.json`:
+
+```json
+{
+    "repositories": [
+        {"type": "vcs", "url": "https://github.com/cosmira/nginx-pushstream-broadcaster"}
+    ]
+}
+```
+
+Then run `composer require cosmira/nginx-pushstream-broadcaster:dev-main`.
+Laravel discovers the service provider automatically.
+
+For direct publishing, setting `NGINX_PUSHSTREAM_URL` is sufficient. Publishing the package configuration is optional:
 
 ```sh
 php artisan vendor:publish --tag=nginx-pushstream-config
@@ -28,7 +40,7 @@ NGINX_PUSHSTREAM_URL=http://127.0.0.1/api/notify/publish/{channel}
 BROADCAST_CONNECTION=nginx-pushstream
 ```
 
-Add a connection to `config/broadcasting.php`:
+For Laravel events or Broadcast Notifications, also add a connection to `config/broadcasting.php`:
 
 ```php
 'connections' => [
@@ -44,6 +56,9 @@ The URL must contain exactly one `{channel}` placeholder; both path and query en
 `http://nginx/pub?id={channel}`.
 
 ## Laravel events
+
+See [application integration recipes](docs/application-integration.md) for complete events, Notifications,
+user channels, progress updates, and client examples.
 
 Use Laravel's `ShouldBroadcast` or `ShouldBroadcastNow` events with public `Channel` instances.
 The driver publishes this JSON body separately to every channel:
@@ -77,13 +92,25 @@ $publisher->send('broadcast', ['message' => 'Configuration published']);
 {"channel_name":"broadcast","data":{"message":"Configuration published"}}
 ```
 
+For an application-defined message format, `sendJson()` encodes the value without adding fields:
+
+```php
+$publisher->sendJson($channel, [
+    'channel' => $channel,
+    'state' => 'data',
+    'data' => ['progress' => 50],
+    'meta' => ['module' => 'reports'],
+]);
+```
+
 For responses already serialized by the application, `sendRaw()` preserves every byte:
 
 ```php
 $publisher->sendRaw($channel, $serializedResponse);
 ```
 
-Both methods return an `Illuminate\Http\Client\Response`. JSON encoding failures, network failures, HTTP errors,
+All three publishing methods return an `Illuminate\Http\Client\Response`.
+JSON encoding failures, network failures, HTTP errors,
 and redirects are surfaced as exceptions. TLS certificate verification stays enabled.
 
 Channel names accept ASCII letters, digits, underscores and hyphens, followed by those characters or dots and colons.
@@ -91,7 +118,8 @@ Channel names accept ASCII letters, digits, underscores and hyphens, followed by
 Channel names are URL encoded before substitution into the publisher endpoint.
 
 The application chooses channel names. Subscribers must use the same channel names and understand the selected
-message format: Laravel event envelopes, direct publishing envelopes, or a custom body sent with `sendRaw()`.
+message format: Laravel event envelopes, direct publishing envelopes, or application messages sent with
+`sendJson()` / `sendRaw()`.
 
 ## Subscriber configuration
 
@@ -116,6 +144,8 @@ This package does not implement the Pusher wire protocol or a Laravel Echo conne
 Use the PushStream JavaScript client or a WebSocket client that understands the configured nginx message template.
 Laravel `PrivateChannel` and `PresenceChannel` are rejected before broadcasting, and Pusher authentication routes deny access.
 `toOthers()` socket exclusion and presence member tracking are not supported by nginx Push Stream.
+The driver removes Laravel's transport-only `socket` field from event data; every subscriber receives the message.
+Broadcast Notifications require an explicit public `Channel` in `broadcastOn()`; the default private channel is unsupported.
 
 ## Quality checks
 
