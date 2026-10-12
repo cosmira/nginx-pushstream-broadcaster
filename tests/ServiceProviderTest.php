@@ -22,7 +22,7 @@ final class ServiceProviderTest extends TestCase
         self::assertSame(2, $config['connect_timeout']);
         self::assertSame($this->app->make(Publisher::class), $this->app->make(Publisher::class));
         self::assertSame([
-            dirname(__DIR__).'/src/../config/nginx-pushstream.php' => $this->app->configPath('nginx-pushstream.php'),
+            dirname(__DIR__).DIRECTORY_SEPARATOR.'src/../config/nginx-pushstream.php' => $this->app->configPath('nginx-pushstream.php'),
         ], ServiceProvider::pathsToPublish(NginxPushstreamServiceProvider::class, 'nginx-pushstream-config'));
     }
 

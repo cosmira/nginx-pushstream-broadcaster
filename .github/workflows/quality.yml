@@ -115,6 +115,9 @@ jobs:
           coverage: none
           tools: composer:v2
 
+      - name: Install package dependencies for inherited contracts
+        run: composer install --no-dev --no-scripts --prefer-dist --no-interaction --no-progress
+
       - name: Install Soda dependencies
         run: composer install --working-dir=.tools/soda --no-dev --prefer-dist --no-interaction --no-progress
 
