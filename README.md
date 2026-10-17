@@ -24,7 +24,7 @@ Before registry publication, add the GitHub repository to your application's `co
 }
 ```
 
-Then run `composer require cosmira/nginx-pushstream-broadcaster:^1.2`.
+Then run `composer require cosmira/nginx-pushstream-broadcaster:^2.0`.
 Laravel discovers the service provider automatically.
 
 For direct publishing, setting `NGINX_PUSHSTREAM_URL` is sufficient. Publishing the package configuration is optional:
@@ -51,7 +51,7 @@ For Laravel events or Broadcast Notifications, also add a connection to `config/
 ```
 
 For personal notifications, set `NGINX_PUSHSTREAM_CHANNEL_SALT` to the shared channel secret.
-The package owns channel naming through `ReceivesPushstreamNotifications`.
+The package notification channel owns personal routing.
 The salt is not a login password or subscriber authentication mechanism.
 
 Package configuration sets `timeout` to 5 seconds and `connect_timeout` to 2 seconds.
@@ -61,33 +61,56 @@ The URL must contain exactly one `{channel}` placeholder; both path and query en
 
 ## Laravel Notifications
 
-Add one trait to your authenticatable User model:
+Use Laravel's standard `Notifiable` on your authenticatable User model:
 
 ```php
-use Cosmira\NginxPushstream\Concerns\ReceivesPushstreamNotifications;
+use Illuminate\Notifications\Notifiable;
 
 class User extends Authenticatable
 {
-    use ReceivesPushstreamNotifications;
+    use Notifiable;
 }
 ```
 
-The trait includes Laravel's `Notifiable` and derives the personal channel from `getAuthIdentifier()`.
-An existing `Notifiable` trait can remain on the model. No custom routing method or facade is required.
-Send through Laravel's normal notification API:
+Define a normal Laravel Notification. Its `via()` selects `PushstreamChannel::class`;
+its `toArray()` returns the application payload:
 
 ```php
-use Cosmira\NginxPushstream\Message;
-use Cosmira\NginxPushstream\Notifications\PushstreamNotification;
+use Cosmira\NginxPushstream\PushstreamChannel;
+use Illuminate\Notifications\Notification;
 
-$user->notify(new PushstreamNotification(Message::data(['progress' => 50])));
+final class ReportReady extends Notification
+{
+    public function __construct(private readonly int $reportId) {}
+
+    public function via(object $notifiable): array
+    {
+        return [PushstreamChannel::class];
+    }
+
+    public function toArray(object $notifiable): array
+    {
+        return ['state' => 'data', 'data' => ['report_id' => $this->reportId]];
+    }
+}
+
+$user->notify(new ReportReady(42));
 ```
 
-This publishes the application envelope `{channel,state,data}` without adding broadcast event fields.
-The notification uses the package channel synchronously. It does not create a second queue job.
-For domain notifications, return `PushstreamChannel::class` from `via()` and a `Message` from `toPushstream()`.
+The channel derives the personal destination from `getAuthIdentifier()` and the package salt.
+It adds only the authoritative `channel` field to the array. False, zero, empty values and nulls
+are preserved. No broadcast `event`, `id`, or `type` fields are added.
 Laravel events, `Notification::fake()`, on-demand routing, and notification cancellation remain available.
-See [application integration](docs/application-integration.md) for custom notifications, queues, and testing.
+See [application integration](docs/application-integration.md) for routing, queues, and testing.
+
+## Upgrade from 1.x
+
+Version 2 removes the package-specific notification trait, generic `PushstreamNotification`, `Message`,
+and `Publisher::sendMessage()`. Use standard Laravel `Notifiable` and domain Notifications with `toArray()`.
+Replace `toPushstream()` with `toArray()`; return the payload directly rather than a message object.
+The Notification owns optional-field omission and application-specific state/error fields.
+Use `app(PushstreamChannel::class)->route($user)` to capture the same route used by delivery.
+`Publisher::send()`, `sendJson()`, `sendRaw()`, and the broadcast driver retain their existing protocols.
 
 ## Laravel events
 
@@ -126,24 +149,6 @@ $publisher->send('broadcast', ['message' => 'Configuration published']);
 {"channel_name":"broadcast","data":{"message":"Configuration published"}}
 ```
 
-Version 1.1 adds an optional application message envelope:
-
-```php
-use Cosmira\NginxPushstream\Message;
-
-$publisher->sendMessage($channel, Message::data(
-    ['progress' => 50],
-    ['module' => 'reports'],
-));
-$publisher->sendMessage($channel, Message::error('report_failed'));
-```
-
-`sendMessage()` adds the destination as `channel` and publishes `state` with either `data` or `error`.
-`Message::data()` defaults to state `data`; `Message::error()` defaults to state `error`.
-Both factories accept optional `meta` and a custom `state`, such as `success`.
-Null `data` and `meta` are omitted. False, zero, empty strings, and empty arrays are preserved.
-Nested null values are unchanged. A message can be serialized with `json_encode()` without adding a channel.
-
 For a different application message format, `sendJson()` encodes the value without adding fields:
 
 ```php
@@ -161,7 +166,7 @@ For responses already serialized by the application, `sendRaw()` preserves every
 $publisher->sendRaw($channel, $serializedResponse);
 ```
 
-All four publishing methods return an `Illuminate\Http\Client\Response`.
+All three publishing methods return an `Illuminate\Http\Client\Response`.
 JSON encoding failures, network failures, HTTP errors,
 and redirects are surfaced as exceptions. TLS certificate verification stays enabled.
 
@@ -169,11 +174,11 @@ Channel names accept ASCII letters, digits, underscores and hyphens, followed by
 `ALL`, slashes, wildcards, whitespace, and URL control characters are rejected.
 Channel names are URL encoded before substitution into the publisher endpoint.
 
-The personal routing trait provides the established `user_{id}_{md5(id . salt)}` convention.
-Applications can override its routing method or explicitly choose other channel names.
+The notification channel provides the established `user_{id}_{md5(id . salt)}` convention.
+Applications can define Laravel's `routeNotificationForPushstream()` hook or use on-demand routing.
 Subscribers must use the same channel names and understand the selected message format.
 Formats include Laravel event envelopes, direct publishing envelopes, or application messages sent with
-`sendMessage()`, `sendJson()`, or `sendRaw()`.
+`sendJson()` or `sendRaw()`.
 
 ## Subscriber configuration
 
