@@ -1,7 +1,7 @@
 # Nginx Push Stream Broadcaster
 
-`cosmira/nginx-pushstream-broadcaster` provides a Laravel broadcast driver and HTTP publisher for the
-[nginx Push Stream module](https://github.com/wandenberg/nginx-push-stream-module).
+`cosmira/nginx-pushstream-broadcaster` provides a Laravel notification channel, broadcast driver, and HTTP publisher
+for the [nginx Push Stream module](https://github.com/wandenberg/nginx-push-stream-module).
 PHP sends an HTTP POST to the publisher; nginx delivers the body to WebSocket subscribers.
 
 Requires PHP 8.2+ and Laravel 12 or 13 (Laravel 13 requires PHP 8.3+).
@@ -24,7 +24,7 @@ Before registry publication, add the GitHub repository to your application's `co
 }
 ```
 
-Then run `composer require cosmira/nginx-pushstream-broadcaster:^1.1`.
+Then run `composer require cosmira/nginx-pushstream-broadcaster:^1.2`.
 Laravel discovers the service provider automatically.
 
 For direct publishing, setting `NGINX_PUSHSTREAM_URL` is sufficient. Publishing the package configuration is optional:
@@ -50,10 +50,44 @@ For Laravel events or Broadcast Notifications, also add a connection to `config/
 ],
 ```
 
+For personal notifications, set `NGINX_PUSHSTREAM_CHANNEL_SALT` to the shared channel secret.
+The package owns channel naming through `ReceivesPushstreamNotifications`.
+The salt is not a login password or subscriber authentication mechanism.
+
 Package configuration sets `timeout` to 5 seconds and `connect_timeout` to 2 seconds.
 Each broadcast connection can override `url`, `timeout`, and `connect_timeout` independently.
 The URL must contain exactly one `{channel}` placeholder; both path and query endpoints work:
 `http://nginx/pub?id={channel}`.
+
+## Laravel Notifications
+
+Add one trait to your authenticatable User model:
+
+```php
+use Cosmira\NginxPushstream\Concerns\ReceivesPushstreamNotifications;
+
+class User extends Authenticatable
+{
+    use ReceivesPushstreamNotifications;
+}
+```
+
+The trait includes Laravel's `Notifiable` and derives the personal channel from `getAuthIdentifier()`.
+An existing `Notifiable` trait can remain on the model. No custom routing method or facade is required.
+Send through Laravel's normal notification API:
+
+```php
+use Cosmira\NginxPushstream\Message;
+use Cosmira\NginxPushstream\Notifications\PushstreamNotification;
+
+$user->notify(new PushstreamNotification(Message::data(['progress' => 50])));
+```
+
+This publishes the application envelope `{channel,state,data}` without adding broadcast event fields.
+The notification uses the package channel synchronously. It does not create a second queue job.
+For domain notifications, return `PushstreamChannel::class` from `via()` and a `Message` from `toPushstream()`.
+Laravel events, `Notification::fake()`, on-demand routing, and notification cancellation remain available.
+See [application integration](docs/application-integration.md) for custom notifications, queues, and testing.
 
 ## Laravel events
 
@@ -135,8 +169,10 @@ Channel names accept ASCII letters, digits, underscores and hyphens, followed by
 `ALL`, slashes, wildcards, whitespace, and URL control characters are rejected.
 Channel names are URL encoded before substitution into the publisher endpoint.
 
-The application chooses channel names. Subscribers must use the same channel names and understand the selected
-message format: Laravel event envelopes, direct publishing envelopes, or application messages sent with
+The personal routing trait provides the established `user_{id}_{md5(id . salt)}` convention.
+Applications can override its routing method or explicitly choose other channel names.
+Subscribers must use the same channel names and understand the selected message format.
+Formats include Laravel event envelopes, direct publishing envelopes, or application messages sent with
 `sendMessage()`, `sendJson()`, or `sendRaw()`.
 
 ## Subscriber configuration
