@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Cosmira\NginxPushstream\Tests;
 
 use Cosmira\NginxPushstream\PushstreamChannel;
+use Cosmira\NginxPushstream\PushstreamMessage;
 use Cosmira\NginxPushstream\Tests\Fixtures\ArrayNotification;
+use Cosmira\NginxPushstream\Tests\Fixtures\MessageNotification;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Notifications\AnonymousNotifiable;
@@ -24,6 +26,132 @@ use RuntimeException;
 
 final class PushstreamChannelTest extends TestCase
 {
+    #[Test]
+    public function deliversAMessageUsingTheActualRecipientAndPrefersItsChannelFormatter(): void
+    {
+        $this->app->make('config')->set('nginx-pushstream.channel_salt', 'shared-yii-salt');
+        Http::fake(['*' => Http::response('', 200)]);
+        $notification = new class extends Notification
+        {
+            public function via(object $notifiable): array
+            {
+                return [PushstreamChannel::class];
+            }
+
+            public function toPushstream(object $notifiable): PushstreamMessage
+            {
+                return new PushstreamMessage(['recipient' => $notifiable->getAuthIdentifier()], 'access', ['channel' => 'untrusted']);
+            }
+
+            public function toArray(object $notifiable): array
+            {
+                throw new \LogicException('The channel-specific formatter takes priority.');
+            }
+        };
+
+        $this->recipient(42)->notify($notification);
+
+        Http::assertSentCount(1);
+        [$request] = Http::recorded()[0];
+        self::assertSame('http://127.0.0.1/api/notify/publish/user_42_'.md5('42shared-yii-salt'), $request->url());
+        self::assertSame([
+            'channel' => 'user_42_'.md5('42shared-yii-salt'),
+            'state'   => 'data',
+            'data'    => ['recipient' => 42],
+            'meta'    => ['module' => 'access', 'channel' => 'untrusted'],
+        ], json_decode($request->body(), true));
+    }
+
+    #[Test]
+    public function publishesAFailureMessageWithoutRequiringItsWireEnvelope(): void
+    {
+        Http::fake(['*' => Http::response('', 200)]);
+        $message = (new PushstreamMessage(
+            ['id' => '42', 'server_id' => 'first:9090', 'result' => null],
+            'refresh_sensors',
+            ['user_id' => 7, 'host' => 'first', 'job_id' => '42'],
+        ))->error('exception_on_processing_job');
+
+        Notifications::route('pushstream', 'captured_channel')->notifyNow(new MessageNotification($message));
+
+        Http::assertSentCount(1);
+        [$request] = Http::recorded()[0];
+        self::assertSame('http://127.0.0.1/api/notify/publish/captured_channel', $request->url());
+        self::assertSame([
+            'channel' => 'captured_channel',
+            'state'   => 'error',
+            'error'   => 'error',
+            'meta'    => [
+                'module' => 'refresh_sensors', 'user_id' => 7, 'host' => 'first', 'job_id' => '42',
+                'data'   => ['id' => '42', 'server_id' => 'first:9090', 'result' => null, 'error_message' => 'exception_on_processing_job'],
+            ],
+        ], json_decode($request->body(), true));
+    }
+
+    #[Test]
+    #[DataProvider('invalidMessages')]
+    public function rejectsMalformedChannelMessagesWithoutFallingBack(mixed $message): void
+    {
+        Http::fake();
+        $notification = new class($message) extends Notification
+        {
+            public function __construct(private readonly mixed $message) {}
+
+            public function via(object $notifiable): array
+            {
+                return [PushstreamChannel::class];
+            }
+
+            public function toPushstream(object $notifiable): mixed
+            {
+                return $this->message;
+            }
+
+            public function toArray(object $notifiable): array
+            {
+                throw new \LogicException('An invalid explicit formatter must not fall back.');
+            }
+        };
+        $this->expectException(RuntimeException::class);
+
+        try {
+            Notifications::route('pushstream', 'reports')->notifyNow($notification);
+        } finally {
+            Http::assertNothingSent();
+        }
+    }
+
+    public static function invalidMessages(): iterable
+    {
+        yield 'null' => [null];
+        yield 'array' => [['data' => []]];
+        yield 'object' => [new \stdClass];
+        yield 'false' => [false];
+        yield 'string' => ['message'];
+    }
+
+    #[Test]
+    public function skipsNullRoutesBeforeCallingTheChannelFormatter(): void
+    {
+        Http::fake();
+        $notification = new class extends Notification
+        {
+            public function via(object $notifiable): array
+            {
+                return [PushstreamChannel::class];
+            }
+
+            public function toPushstream(object $notifiable): PushstreamMessage
+            {
+                throw new \LogicException('A null recipient must skip formatting.');
+            }
+        };
+
+        Notifications::route('pushstream', null)->notifyNow($notification);
+
+        Http::assertNothingSent();
+    }
+
     #[Test]
     public function deliversThroughTheStandardLaravelNotifiableApi(): void
     {
@@ -241,7 +369,7 @@ final class PushstreamChannelTest extends TestCase
     }
 
     #[Test]
-    public function requiresAnArrayMethod(): void
+    public function requiresAChannelFormatterOrAnArrayMethod(): void
     {
         $notification = new class extends Notification
         {

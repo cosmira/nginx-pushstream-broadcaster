@@ -8,13 +8,13 @@ Requires PHP 8.2+ and Laravel 12 or 13 (Laravel 13 requires PHP 8.3+).
 
 ## Installation
 
-Once the package has been published to your Composer registry:
+Install version 2.1 or later:
 
 ```sh
-composer require cosmira/nginx-pushstream-broadcaster
+composer require cosmira/nginx-pushstream-broadcaster:^2.1
 ```
 
-Before registry publication, add the GitHub repository to your application's `composer.json`:
+If your Composer registry does not list the package, add the GitHub repository to your application's `composer.json`:
 
 ```json
 {
@@ -24,7 +24,7 @@ Before registry publication, add the GitHub repository to your application's `co
 }
 ```
 
-Then run `composer require cosmira/nginx-pushstream-broadcaster:^2.0`.
+Then run `composer require cosmira/nginx-pushstream-broadcaster:^2.1`.
 Laravel discovers the service provider automatically.
 
 For direct publishing, setting `NGINX_PUSHSTREAM_URL` is sufficient. Publishing the package configuration is optional:
@@ -61,6 +61,9 @@ The URL must contain exactly one `{channel}` placeholder; both path and query en
 
 ## Laravel Notifications
 
+The `toPushstream()` and `PushstreamMessage` API is available since 2.1.0.
+The raw `toArray()` API introduced in 2.0.0 remains supported as described under compatibility.
+
 Use Laravel's standard `Notifiable` on your authenticatable User model:
 
 ```php
@@ -73,10 +76,11 @@ class User extends Authenticatable
 ```
 
 Define a normal Laravel Notification. Its `via()` selects `PushstreamChannel::class`;
-its `toArray()` returns the application payload:
+its `toPushstream()` returns structured application data and the client module:
 
 ```php
 use Cosmira\NginxPushstream\PushstreamChannel;
+use Cosmira\NginxPushstream\PushstreamMessage;
 use Illuminate\Notifications\Notification;
 
 final class ReportReady extends Notification
@@ -88,9 +92,12 @@ final class ReportReady extends Notification
         return [PushstreamChannel::class];
     }
 
-    public function toArray(object $notifiable): array
+    public function toPushstream(object $notifiable): PushstreamMessage
     {
-        return ['state' => 'data', 'data' => ['report_id' => $this->reportId]];
+        return new PushstreamMessage(
+            data: ['report_id' => $this->reportId],
+            module: 'reports',
+        );
     }
 }
 
@@ -98,17 +105,46 @@ $user->notify(new ReportReady(42));
 ```
 
 The channel derives the personal destination from `getAuthIdentifier()` and the package salt.
-It adds only the authoritative `channel` field to the array. False, zero, empty values and nulls
-are preserved. No broadcast `event`, `id`, or `type` fields are added.
+`PushstreamMessage` supplies the `state`, `data`, and `meta` envelope used by the application client.
+The channel adds the authoritative `channel` field. False, zero, empty values, nulls, and numeric array
+keys are preserved. No broadcast `event`, `id`, or `type` fields are added.
+The published body for `new ReportReady(42)` is:
+
+```json
+{"channel":"user_7_<hash>","state":"data","data":{"report_id":42},"meta":{"module":"reports"}}
+```
+
+For a failure, provide the safe application error code without assembling protocol fields:
+
+```php
+return (new PushstreamMessage(
+    data: ['report_id' => $this->reportId],
+    module: 'reports',
+    meta: ['job_id' => '42'],
+))->error('report_generation_failed');
+```
+
+The message places the data and error code in `meta.data` for the existing client protocol.
+It does not inspect exceptions or choose safe error codes for the application.
 Laravel events, `Notification::fake()`, on-demand routing, and notification cancellation remain available.
 See [application integration](docs/application-integration.md) for routing, queues, and testing.
 
+## Compatibility with raw notifications
+
+Existing notifications with `toArray(object $notifiable): array` remain supported.
+Their array is sent unchanged except for the authoritative `channel` field. The channel does not
+wrap that payload in `PushstreamMessage` or filter its values. This is the API available in v2.0.0.
+
+Since 2.1.0, `toPushstream()` takes priority when both methods exist.
+It must return `PushstreamMessage`. An invalid result raises an exception without trying `toArray()`.
+A null route skips formatting and publication.
+
 ## Upgrade from 1.x
 
-Version 2 removes the package-specific notification trait, generic `PushstreamNotification`, `Message`,
-and `Publisher::sendMessage()`. Use standard Laravel `Notifiable` and domain Notifications with `toArray()`.
-Replace `toPushstream()` with `toArray()`; return the payload directly rather than a message object.
-The Notification owns optional-field omission and application-specific state/error fields.
+Version 2 removed the package-specific notification trait, generic `PushstreamNotification`, old `Message`,
+and `Publisher::sendMessage()`. Use standard Laravel `Notifiable` and domain Notifications.
+`PushstreamMessage`, introduced in 2.1.0, is a separate API for application data, module, and safe error codes.
+It does not restore the old generic notification or trait.
 Use `app(PushstreamChannel::class)->route($user)` to capture the same route used by delivery.
 `Publisher::send()`, `sendJson()`, `sendRaw()`, and the broadcast driver retain their existing protocols.
 

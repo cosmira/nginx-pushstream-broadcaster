@@ -4,6 +4,10 @@ Use Laravel Notifications for application messages. The package channel resolves
 Laravel's standard `Notifiable` recipients. Laravel broadcast events remain available for frontends using `{event,data}`.
 All paths use the same HTTP publisher.
 
+The `toPushstream()` and `PushstreamMessage` API is available since 2.1.0.
+Raw `toArray()` notifications remain supported with their 2.0.0 behavior.
+The lower-level Publisher and broadcast APIs below are unchanged.
+
 ## Configure personal notifications
 
 Install the package as described in the [README](../README.md#installation), then set:
@@ -54,6 +58,7 @@ Use a normal Laravel Notification when the application owns a named event or sel
 
 ```php
 use Cosmira\NginxPushstream\PushstreamChannel;
+use Cosmira\NginxPushstream\PushstreamMessage;
 use Illuminate\Notifications\Notification;
 
 final class ReportReady extends Notification
@@ -65,18 +70,28 @@ final class ReportReady extends Notification
         return [PushstreamChannel::class];
     }
 
-    public function toArray(object $notifiable): array
+    public function toPushstream(object $notifiable): PushstreamMessage
     {
-        return ['state' => 'data', 'data' => ['report_id' => $this->reportId], 'meta' => ['module' => 'reports']];
+        return new PushstreamMessage(
+            data: ['report_id' => $this->reportId],
+            module: 'reports',
+        );
     }
 }
 
 $user->notify(new ReportReady(42));
 ```
 
-The channel publishes `['channel' => $resolvedRoute] + $notification->toArray($notifiable)`.
-It preserves every payload value, including nulls. The resolved destination cannot be overridden by payload data.
-It adds no Laravel broadcast event, notification ID, or type fields.
+The message generates the application envelope. The channel adds the resolved destination:
+
+```json
+{"channel":"user_7_<hash>","state":"data","data":{"report_id":42},"meta":{"module":"reports"}}
+```
+
+`module` selects the client handler. The package does not infer it from the Notification class.
+`data` and optional `meta` are arrays. Empty, false, zero, and null values remain unchanged.
+The message preserves numeric array keys. The resolved destination cannot be overridden by payload data.
+The channel adds no Laravel broadcast event, notification ID, or type fields.
 Define `routeNotificationForPushstream($notification)` to override personal routing; return null to opt out.
 An explicit anonymous route of null also skips delivery, with no personal fallback.
 Use the dedicated hook rather than overriding Laravel's general route dispatcher.
@@ -84,6 +99,52 @@ Use the dedicated hook rather than overriding Laravel's general route dispatcher
 `via()` uses the channel class; routing uses the stable `pushstream` key.
 For queued delivery, implement Laravel's `ShouldQueue` and use `Queueable` on your domain notification.
 Laravel controls its connection, retry policy, events, and `NotificationSending` cancellation.
+
+## Report a failure
+
+Return the same message type with a safe application error code:
+
+```php
+public function toPushstream(object $notifiable): PushstreamMessage
+{
+    return (new PushstreamMessage(
+        data: ['report_id' => $this->reportId],
+        module: 'reports',
+        meta: ['job_id' => '42'],
+    ))->error('report_generation_failed');
+}
+```
+
+The publisher receives:
+
+```json
+{"channel":"user_7_<hash>","state":"error","error":"error","meta":{"module":"reports","job_id":"42","data":{"report_id":42,"error_message":"report_generation_failed"}}}
+```
+
+The application chooses the code. Passing exception text can expose credentials or other private data.
+The `error()` method updates the message and returns that same instance. `toArray()` does not modify it.
+
+The message always owns `meta.module`. On a failure, it also owns `meta.data` and
+`meta.data.error_message`. Additional metadata cannot replace these generated fields.
+Other fields, including falsey values, remain unchanged. Nonempty module names and error codes are
+preserved verbatim. Empty or whitespace-only module names and error codes raise `InvalidArgumentException`.
+
+## Keep an existing raw notification
+
+A notification with only `toArray(object $notifiable): array` keeps the v2.0.0 behavior.
+It supplies the complete publisher body, excluding the channel added by the package:
+
+```php
+public function toArray(object $notifiable): array
+{
+    return ['state' => 'data', 'data' => false, 'meta' => ['module' => 'legacy_reports']];
+}
+```
+
+The channel sends the raw array without another envelope or changes to nested values.
+When both methods exist, `toPushstream()` takes priority and must return `PushstreamMessage`.
+An invalid return value fails before HTTP publication and does not fall back to `toArray()`.
+If neither method exists, the channel raises `RuntimeException`.
 
 ## Preserve a destination in a background job
 
@@ -250,7 +311,7 @@ socket.onmessage = ({ data }) => {
     const message = JSON.parse(data);
     if (message.meta?.module !== 'reports') return;
     if (message.state === 'error') {
-        showReportError(message.error);
+        showReportError(message.meta.data.error_message);
         return;
     }
     if (message.state === 'data') {

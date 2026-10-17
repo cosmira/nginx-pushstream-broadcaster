@@ -53,7 +53,7 @@ final readonly class PushstreamChannel
     }
 
     /**
-     * Deliver the notification's array without adding a broadcast envelope or queue.
+     * Deliver a channel-specific message or an unchanged application array.
      */
     public function send(object $notifiable, Notification $notification): ?Response
     {
@@ -63,14 +63,24 @@ final readonly class PushstreamChannel
             return null;
         }
 
-        if (! method_exists($notification, 'toArray')) {
-            throw new RuntimeException('Notification is missing a toArray method.');
-        }
+        if (method_exists($notification, 'toPushstream')) {
+            $message = $notification->toPushstream($notifiable);
 
-        $payload = $notification->toArray($notifiable);
+            if (! $message instanceof PushstreamMessage) {
+                throw new RuntimeException('toPushstream must return a PushstreamMessage.');
+            }
 
-        if (! is_array($payload)) {
-            throw new RuntimeException('Notification toArray must return an array.');
+            $payload = $message->toArray();
+        } else {
+            if (! method_exists($notification, 'toArray')) {
+                throw new RuntimeException('Notification requires toPushstream or toArray.');
+            }
+
+            $payload = $notification->toArray($notifiable);
+
+            if (! is_array($payload)) {
+                throw new RuntimeException('Notification toArray must return an array.');
+            }
         }
 
         return $this->publisher->sendJson($channel, ['channel' => $channel] + $payload);
