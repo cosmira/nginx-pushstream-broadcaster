@@ -8,6 +8,8 @@ All examples use the same nginx HTTP publisher; no additional transport service 
 
 | Method | Body delivered to subscribers | Typical use |
 | --- | --- | --- |
+| `sendMessage($channel, Message::data(...))` | `{channel,state,data?,meta?}` | Data, progress, or completion messages |
+| `sendMessage($channel, Message::error(...))` | `{channel,state,error,meta?}` | Application error codes |
 | `sendJson($channel, $message)` | JSON encoding of `$message`, no added fields | Application notifications and progress/status |
 | `sendRaw($channel, $body)` | Exactly the supplied bytes | Already serialized responses |
 | `send($channel, $data)` | `{channel_name,data}` | Subscribers expecting that envelope |
@@ -52,43 +54,54 @@ The package does not need access to the current request, authenticated user, or 
 Inject the publisher directly into a job's `handle()` or an application method:
 
 ```php
+use Cosmira\NginxPushstream\Message;
 use Cosmira\NginxPushstream\Publisher;
 
 public function handle(Publisher $publisher): void
 {
     $channel = $this->user->notificationChannelName();
 
-    $publisher->sendJson($channel, [
-        'channel' => $channel,
-        'state' => 'data',
-        'data' => ['progress' => 50],
-        'meta' => ['module' => 'reports'],
-    ]);
+    $publisher->sendMessage($channel, Message::data(
+        ['progress' => 50],
+        ['module' => 'reports'],
+    ));
 }
 ```
 
-`state`, `data`, `error`, and `meta` belong to your application contract.
-Keep their values and nesting exactly as the consuming frontend expects.
-The package does not rename fields or add an event envelope to `sendJson()`.
+`Message` is an optional envelope available since version 1.1.
+`sendMessage()` supplies the actual destination as `channel`.
+`Message::data()` defaults to `state: "data"`; `Message::error()` defaults to `state: "error"`.
+The application chooses data, error codes, metadata, and custom state values.
+
+Null `data` and `meta` are omitted. False, zero, empty strings, and empty arrays remain in the message.
+Nested null values are unchanged. Error messages always contain `error`.
+`json_encode($message)` serializes the envelope without its destination channel.
+
+For a custom completion state:
+
+```php
+$publisher->sendMessage($channel, Message::data(['download' => $url], state: 'success'));
+```
+
+The existing `send()`, `sendJson()`, `sendRaw()`, and Laravel event formats are unchanged.
+Use `sendJson()` when the frontend expects a different envelope.
 
 For an error message:
 
 ```php
-$publisher->sendJson($channel, [
-    'channel' => $channel,
-    'state' => 'error',
-    'error' => 'report_generation_failed',
-    'meta' => ['module' => 'reports'],
-]);
+$publisher->sendMessage($channel, Message::error(
+    'report_generation_failed',
+    ['module' => 'reports'],
+));
 ```
 
-For shared and service messages, use the same application schema and the required destination.
-When your schema contains a `channel` field, set it to the same destination:
+For shared and service messages, reuse the same message with the required destination:
 
 ```php
-$publisher->sendJson('broadcast', $message);
-$publisher->sendJson('service_config', $configurationMessage);
-$publisher->sendJson('service_update', $updateMessage);
+$message = Message::data(['version' => 2]);
+$publisher->sendMessage('broadcast', $message);
+$publisher->sendMessage('service_config', $message);
+$publisher->sendMessage('service_update', $message);
 ```
 
 If a response object already produces the required serialized body:

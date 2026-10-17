@@ -24,7 +24,7 @@ Before registry publication, add the GitHub repository to your application's `co
 }
 ```
 
-Then run `composer require cosmira/nginx-pushstream-broadcaster:dev-main`.
+Then run `composer require cosmira/nginx-pushstream-broadcaster:^1.1`.
 Laravel discovers the service provider automatically.
 
 For direct publishing, setting `NGINX_PUSHSTREAM_URL` is sufficient. Publishing the package configuration is optional:
@@ -92,7 +92,25 @@ $publisher->send('broadcast', ['message' => 'Configuration published']);
 {"channel_name":"broadcast","data":{"message":"Configuration published"}}
 ```
 
-For an application-defined message format, `sendJson()` encodes the value without adding fields:
+Version 1.1 adds an optional application message envelope:
+
+```php
+use Cosmira\NginxPushstream\Message;
+
+$publisher->sendMessage($channel, Message::data(
+    ['progress' => 50],
+    ['module' => 'reports'],
+));
+$publisher->sendMessage($channel, Message::error('report_failed'));
+```
+
+`sendMessage()` adds the destination as `channel` and publishes `state` with either `data` or `error`.
+`Message::data()` defaults to state `data`; `Message::error()` defaults to state `error`.
+Both factories accept optional `meta` and a custom `state`, such as `success`.
+Null `data` and `meta` are omitted. False, zero, empty strings, and empty arrays are preserved.
+Nested null values are unchanged. A message can be serialized with `json_encode()` without adding a channel.
+
+For a different application message format, `sendJson()` encodes the value without adding fields:
 
 ```php
 $publisher->sendJson($channel, [
@@ -109,7 +127,7 @@ For responses already serialized by the application, `sendRaw()` preserves every
 $publisher->sendRaw($channel, $serializedResponse);
 ```
 
-All three publishing methods return an `Illuminate\Http\Client\Response`.
+All four publishing methods return an `Illuminate\Http\Client\Response`.
 JSON encoding failures, network failures, HTTP errors,
 and redirects are surfaced as exceptions. TLS certificate verification stays enabled.
 
@@ -119,7 +137,7 @@ Channel names are URL encoded before substitution into the publisher endpoint.
 
 The application chooses channel names. Subscribers must use the same channel names and understand the selected
 message format: Laravel event envelopes, direct publishing envelopes, or application messages sent with
-`sendJson()` / `sendRaw()`.
+`sendMessage()`, `sendJson()`, or `sendRaw()`.
 
 ## Subscriber configuration
 
