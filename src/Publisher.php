@@ -47,6 +47,17 @@ final readonly class Publisher
     }
 
     /**
+     * Publish an application message addressed to the destination channel.
+     */
+    public function sendMessage(string $channel, Message $message): Response
+    {
+        return $this->sendJson($channel, [
+            'channel' => $channel,
+            ...$message->jsonSerialize(),
+        ]);
+    }
+
+    /**
      * Publish application data as JSON without adding an envelope.
      */
     public function sendJson(string $channel, mixed $data): Response
