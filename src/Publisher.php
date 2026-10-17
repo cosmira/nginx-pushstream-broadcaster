@@ -47,17 +47,6 @@ final readonly class Publisher
     }
 
     /**
-     * Publish an application message addressed to the destination channel.
-     */
-    public function sendMessage(string $channel, Message $message): Response
-    {
-        return $this->sendJson($channel, [
-            'channel' => $channel,
-            ...$message->jsonSerialize(),
-        ]);
-    }
-
-    /**
      * Publish application data as JSON without adding an envelope.
      */
     public function sendJson(string $channel, mixed $data): Response
@@ -70,11 +59,7 @@ final readonly class Publisher
      */
     public function sendRaw(string $channel, string $body): Response
     {
-        $valid = preg_match('/\A[A-Za-z0-9_-][A-Za-z0-9_.:-]*\z/', $channel) === 1;
-
-        if (! $valid || $channel === 'ALL') {
-            throw new InvalidArgumentException('Invalid Push Stream channel.');
-        }
+        $this->validateChannel($channel);
 
         $url = str_replace('{channel}', rawurlencode($channel), $this->url);
         $response = $this->http
@@ -94,5 +79,17 @@ final readonly class Publisher
         }
 
         return $response;
+    }
+
+    /**
+     * Reject channel names unsupported by the publisher and subscriber protocol.
+     */
+    public function validateChannel(string $channel): void
+    {
+        $valid = preg_match('/\A[A-Za-z0-9_-][A-Za-z0-9_.:-]*\z/', $channel) === 1;
+
+        if (! $valid || $channel === 'ALL') {
+            throw new InvalidArgumentException('Invalid Push Stream channel.');
+        }
     }
 }

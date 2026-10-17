@@ -1,7 +1,7 @@
 # Application integration
 
-Use Laravel Notifications for application messages. The package trait supplies normal Laravel notification
-methods and personal routing. Laravel broadcast events remain available for frontends using `{event,data}`.
+Use Laravel Notifications for application messages. The package channel resolves personal routes for
+Laravel's standard `Notifiable` recipients. Laravel broadcast events remain available for frontends using `{event,data}`.
 All paths use the same HTTP publisher.
 
 ## Configure personal notifications
@@ -24,56 +24,35 @@ Do not use the application's `APP_KEY` as a fallback. During migration, reuse th
 exact `user_{id}_{md5(id . salt)}` convention so browsers retain their subscriptions.
 Channel names do not authenticate subscribers. Enforce access in your application and nginx.
 
-Add one trait to your authenticatable User model:
+Use Laravel's standard trait on your authenticatable User model:
 
 ```php
-use Cosmira\NginxPushstream\Concerns\ReceivesPushstreamNotifications;
+use Illuminate\Notifications\Notifiable;
 
 class User extends Authenticatable
 {
-    use ReceivesPushstreamNotifications;
+    use Notifiable;
 }
 ```
 
-The trait includes Laravel's full `Notifiable` API. It does not send database, mail, or broadcast notifications
-unless a notification selects those channels. The database notification relationship requires Laravel's
-notifications table only if your application uses that channel.
+The standard trait provides Laravel's notification methods. Other channels are used only when selected
+by a notification's `via()`. A database notification table is needed only for the database channel.
 The model supplies `getAuthIdentifier()`. Missing identities, invalid channel characters, and missing or
 invalid salts produce a null route. Laravel skips delivery for a null route.
 
 Expose the same route in your authenticated login/session response:
 
 ```php
-return ['CHANNEL_NAME' => $user->routeNotificationFor('pushstream')];
+return ['CHANNEL_NAME' => app(PushstreamChannel::class)->route($user)];
 ```
 
 The browser subscribes to `CHANNEL_NAME`. Rotating the salt changes future personal routes.
-
-## Send an application message
-
-```php
-use Cosmira\NginxPushstream\Message;
-use Cosmira\NginxPushstream\Notifications\PushstreamNotification;
-
-$user->notify(new PushstreamNotification(Message::data(
-    ['progress' => 50],
-    ['module' => 'reports'],
-)));
-$user->notify(new PushstreamNotification(Message::error('report_failed')));
-```
-
-The message envelope contains `channel`, `state`, and either `data` or `error`, with optional `meta`.
-`Message::data()` defaults to `data` state. `Message::error()` defaults to `error` state.
-Both accept a custom state such as `success`.
-Null data and metadata are omitted. False, zero, empty strings, empty arrays, and nested nulls are preserved.
-The channel does not append Laravel's broadcast notification `id` or `type` fields.
 
 ## Define a domain notification
 
 Use a normal Laravel Notification when the application owns a named event or selects other channels:
 
 ```php
-use Cosmira\NginxPushstream\Message;
 use Cosmira\NginxPushstream\PushstreamChannel;
 use Illuminate\Notifications\Notification;
 
@@ -86,14 +65,21 @@ final class ReportReady extends Notification
         return [PushstreamChannel::class];
     }
 
-    public function toPushstream(object $notifiable): Message
+    public function toArray(object $notifiable): array
     {
-        return Message::data(['report_id' => $this->reportId], ['module' => 'reports']);
+        return ['state' => 'data', 'data' => ['report_id' => $this->reportId], 'meta' => ['module' => 'reports']];
     }
 }
 
 $user->notify(new ReportReady(42));
 ```
+
+The channel publishes `['channel' => $resolvedRoute] + $notification->toArray($notifiable)`.
+It preserves every payload value, including nulls. The resolved destination cannot be overridden by payload data.
+It adds no Laravel broadcast event, notification ID, or type fields.
+Define `routeNotificationForPushstream($notification)` to override personal routing; return null to opt out.
+An explicit anonymous route of null also skips delivery, with no personal fallback.
+Use the dedicated hook rather than overriding Laravel's general route dispatcher.
 
 `via()` uses the channel class; routing uses the stable `pushstream` key.
 For queued delivery, implement Laravel's `ShouldQueue` and use `Queueable` on your domain notification.
@@ -104,7 +90,7 @@ Laravel controls its connection, retry policy, events, and `NotificationSending`
 Capture the route before dispatching work that must notify its original subscriber:
 
 ```php
-$channel = $user->routeNotificationFor('pushstream');
+$channel = app(PushstreamChannel::class)->route($user);
 ```
 
 An application requiring delivery can reject a null route before starting the operation.
@@ -114,10 +100,10 @@ Store the non-null channel with the job, then send synchronously from the existi
 use Illuminate\Support\Facades\Notification;
 
 Notification::route('pushstream', $this->channel)
-    ->notifyNow(new PushstreamNotification(Message::data(['progress' => 100])));
+    ->notifyNow(new ReportReady(42));
 ```
 
-The generic `PushstreamNotification` does not implement `ShouldQueue`, so this adds no second queued job.
+`notifyNow()` sends synchronously from the existing worker, without a second queued notification.
 The stored route survives salt rotation without reloading the user. On-demand delivery also supports
 shared channels such as `broadcast` and service channels such as `service_config`.
 Explicit invalid non-null routes raise an error rather than silently skipping delivery.
@@ -132,15 +118,13 @@ Existing Publisher methods remain available:
 
 | Method | Body delivered to subscribers |
 | --- | --- |
-| `sendMessage($channel, Message::data(...))` | `{channel,state,data?,meta?}` |
-| `sendMessage($channel, Message::error(...))` | `{channel,state,error,meta?}` |
 | `sendJson($channel, $message)` | JSON encoding without added fields |
 | `sendRaw($channel, $body)` | Exactly the supplied bytes |
 | `send($channel, $data)` | `{channel_name,data}` |
 | Laravel broadcast event or Broadcast Notification | `{event,data}` |
 
 Use `Publisher` directly for already serialized messages or alternate wire formats.
-The package does not change the existing transport APIs.
+These three Publisher methods retain their existing transport protocols.
 
 ## Laravel event
 
@@ -181,7 +165,7 @@ final class ReportReady implements ShouldBroadcastNow
 Dispatch normally:
 
 ```php
-event(new \App\Events\ReportReady($user->routeNotificationFor('pushstream'), 42));
+event(new \App\Events\ReportReady(app(PushstreamChannel::class)->route($user), 42));
 ```
 
 The subscriber receives `{"event":"report.ready","data":{"report_id":42}}`.
@@ -233,7 +217,7 @@ final class ReportReady extends Notification
 Send through the normal Notifiable API:
 
 ```php
-$user->notify(new \App\Notifications\ReportReady($user->routeNotificationFor('pushstream'), 42));
+$user->notify(new \App\Notifications\ReportReady(app(PushstreamChannel::class)->route($user), 42));
 ```
 
 Broadcast Notifications queue their broadcast event; configure a queue worker (or the `sync` queue for local evaluation).
@@ -306,12 +290,11 @@ Http::assertSent(fn ($request) =>
 For application dispatch tests, use Laravel's notification fake:
 
 ```php
-use Cosmira\NginxPushstream\Notifications\PushstreamNotification;
 use Illuminate\Support\Facades\Notification;
 
 Notification::fake();
-$user->notify(new PushstreamNotification(Message::data(['progress' => 50])));
-Notification::assertSentTo($user, PushstreamNotification::class);
+$user->notify(new ReportReady(42));
+Notification::assertSentTo($user, ReportReady::class);
 ```
 
 This verifies dispatch intent. It does not execute channel routing or publish HTTP.

@@ -36,7 +36,7 @@ return [
     | Personal Channel Secret
     |--------------------------------------------------------------------------
     |
-    | The notification trait uses this shared secret to form personal channels.
+    | The notification channel uses this shared secret to form personal channels.
     | Keep it identical to the subscriber application's secret during migration.
     | Missing or empty secrets disable personal routing. Channel names do not
     | authenticate subscribers; enforce subscriber access in your app and nginx.
